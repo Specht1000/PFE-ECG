@@ -1,0 +1,17 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "tasks_monitor.c"
+        "ads1115.c"
+        "ecg_hw.c"
+        "sh1106_oled.c"
+        "ecg_processing.c"
+    INCLUDE_DIRS
+        "."
+        "../include"
+    REQUIRES
+        freertos
+        driver
+        esp_timer
+        log
+)

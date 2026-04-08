@@ -1,0 +1,43 @@
+# Build
+.pio/
+build/
+*.elf
+*.bin
+*.map
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+
+# Python
+.venv/
+.venv-cnn/
+__pycache__/
+*.pyc
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (se for pesado)
+data/raw/
+data/interim/
+
+# Models treinados (opcional)
+models/*.h5
+models/*.pt
+models/*.tflite
+
+# Dados processados pesados
+data/processed/
+*.npy
+*.npz
