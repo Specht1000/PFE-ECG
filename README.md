@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🫀 PFE ECG — Portable Arrhythmia Detection System
 
 ## 📌 Overview
