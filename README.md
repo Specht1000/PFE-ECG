@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🫀 PFE ECG — Portable Arrhythmia Detection System
 
 ## 📌 Overview
@@ -172,3 +173,26 @@ pio device monitor
 
 ## 📄 License
 This project is open-source for academic use.
+=======
+# PFE ECG - Portable Arrhythmia Detection System
+
+## Overview
+Portable ECG device using ESP32-S3 with real-time signal processing and AI-based arrhythmia detection.
+
+## Features
+- ECG acquisition (AD8232)
+- Pan-Tompkins algorithm
+- BPM calculation
+- OLED display
+- Embedded AI (future)
+
+## Hardware
+- ESP32-S3
+- AD8232 ECG module
+- ADS1115 ADC
+- OLED display
+
+## Software
+- ESP-IDF (C)
+- Python (training AI)
+>>>>>>> f37fc11ee787b1804720f7bb19d74cb7fc04d41a
