@@ -41,3 +41,6 @@ models/*.tflite
 data/processed/
 *.npy
 *.npz
+
+# Imagens
+assets/

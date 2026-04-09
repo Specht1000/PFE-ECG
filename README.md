@@ -1,208 +1,174 @@
-# PFE - ECG Arrhythmia Detection System
+# 🫀 PFE ECG — Portable Arrhythmia Detection System
 
 ## 📌 Overview
+This project consists of the development of a **portable ECG monitoring system** capable of real-time signal acquisition, processing, and arrhythmia detection using embedded hardware and artificial intelligence.
 
-This project aims to develop an embedded system for real-time ECG monitoring and arrhythmia detection.
-
-The system combines:
-
-- ECG signal acquisition
-- Digital signal processing (Pan-Tompkins algorithm)
-- Feature extraction (RR intervals, HR variability)
-- Machine Learning classification
-
-The embedded target is an ESP32, while training and validation are performed using real medical data from the MIT-BIH Arrhythmia Database.
+The system is designed to be:
+- Low-cost
+- Portable
+- Real-time capable
+- Suitable for educational and prototyping purposes
 
 ---
 
 ## 🎯 Objectives
 
-- Detect cardiac arrhythmias automatically
-- Provide real-time alerts
-- Validate results using a clinical dataset (MIT-BIH)
-- Implement a lightweight model compatible with embedded systems
+### General Objective
+Develop an embedded system capable of acquiring ECG signals and detecting cardiac abnormalities in real time.
+
+### Specific Objectives
+- Acquire ECG signal using analog front-end (AD8232)
+- Digitize signal using high-resolution ADC (ADS1115)
+- Implement signal processing pipeline (Pan-Tompkins algorithm)
+- Estimate heart rate (BPM)
+- Detect R-peaks and anomalies
+- Display results on OLED screen
+- Integrate AI model for arrhythmia classification (offline/embedded)
 
 ---
 
-## 🧠 Project Architecture
+## 🧠 System Architecture
+![System Architecture](assets/SysArch.jpg)
 
-The project is divided into two main parts:
 
-### 1. Offline (PC - Python)
+---
 
-- Data loading (MIT-BIH)
-- Signal preprocessing
-- Feature extraction
-- Model training
-- Model validation
+## 🔧 Hardware Components
 
-### 2. Embedded (ESP32)
+| Component | Description |
+|----------|------------|
+| ESP32-S3 | Main microcontroller (Wi-Fi + Bluetooth) |
+| AD8232 | ECG analog front-end module |
+| ADS1115 | 16-bit ADC (I2C interface) |
+| OLED 1.3" | Display (SH1106, I2C) |
+| Power supply | Power bank (5V USB) |
+| Electrodes | ECG signal acquisition |
 
-- ECG acquisition (sensor)
-- Signal filtering
-- Feature extraction
-- Real-time inference
+---
+
+## 💻 Software Architecture
+
+### Firmware (ESP-IDF)
+- FreeRTOS-based multitasking
+- Modular drivers:
+  - `ecg_hw.c` → hardware interface  
+  - `ads1115.c` → ADC communication  
+  - `sh1106_oled.c` → display driver  
+  - `ecg_processing.c` → signal processing  
+
+### Tasks
+- `taskApp` → ECG acquisition + processing + display  
+- `taskMonitorTasks` → performance monitoring  
+
+---
+
+## 📊 Signal Processing
+
+The system implements a simplified **Pan-Tompkins algorithm**, including:
+
+- Bandpass filtering  
+- Derivative stage  
+- Squaring  
+- Moving Window Integration  
+- Adaptive thresholding  
+- R-peak detection  
+
+Outputs:
+- Raw ECG signal  
+- Filtered signal  
+- Detected peaks  
+- BPM estimation  
+
+---
+
+## 🤖 Artificial Intelligence (PC-side)
+
+Training is performed using Python:
+
+- Dataset preprocessing  
+- Signal segmentation  
+- Feature extraction  
+- CNN-based classification (arrhythmias)  
+
+📁 Location:
+- src/
+- models/
+- notebooks/
+
+
+⚠️ Note:  
+Large datasets and processed arrays are not included in this repository.
 
 ---
 
 ## 📁 Project Structure
-pfe_ecg/
-├── README.md
-├── requirements.txt
-├── .gitignore
-│
-├── data/
-│ ├── raw/
-│ │ └── mit_bih/
-│ │ ├── 100.dat
-│ │ ├── 100.hea
-│ │ ├── 100.atr
-│ │ └── ...
-│ │
-│ ├── interim/
-│ │ ├── csv/
-│ │ └── windows/
-│ │
-│ └── processed/
-│ ├── features.csv
-│ ├── train.csv
-│ ├── test.csv
-│ └── labels.csv
-│
-├── notebooks/
-│ ├── 01_explore_mitbih.ipynb
-│ ├── 02_feature_analysis.ipynb
-│ └── 03_model_tests.ipynb
-│
-├── src/
-│ ├── config.py
-│ │
-│ ├── dataset/
-│ │ ├── read_mitbih.py
-│ │ ├── convert_to_csv.py
-│ │ └── split_dataset.py
-│ │
-│ ├── preprocessing/
-│ │ ├── filters.py
-│ │ ├── normalization.py
-│ │ └── windowing.py
-│ │
-│ ├── features/
-│ │ ├── rr_features.py
-│ │ ├── time_domain.py
-│ │ └── feature_builder.py
-│ │
-│ ├── models/
-│ │ ├── train_sklearn.py
-│ │ ├── train_mlp.py
-│ │ ├── evaluate.py
-│ │ └── predict.py
-│ │
-│ ├── export/
-│ │ ├── save_model.py
-│ │ ├── export_json.py
-│ │ └── export_c_array.py
-│ │
-│ └── utils/
-│ ├── io_utils.py
-│ ├── plot_utils.py
-│ └── metrics_utils.py
-│
-├── models/
-│ ├── trained/
-│ │ ├── model.pkl
-│ │ └── scaler.pkl
-│ │
-│ └── exported/
-│ ├── model.json
-│ └── model.h
-│
-├── reports/
-│ ├── figures/
-│ ├── tables/
-│ └── logs/
-│
-└── scripts/
-├── run_pipeline.py
-├── train_all.py
-└── evaluate_model.py
+- PFE_ECG/
+    - main/ # Firmware (ESP-IDF)
+    - src/ # Python processing & AI
+    - models/ # Trained models
+    - scripts/ # Data processing scripts
+    - notebooks/ # Experiments & analysis
+    - reports/ # Documentation
+    - data/ # (ignored if large)
+    - platformio.ini
+    - CMakeLists.txt
+    - README.md
+
 
 ---
 
-## ⚙️ Workflow
+## ⚙️ How to Build (Firmware)
 
-### Step 1 — Data Preparation
-- Load MIT-BIH dataset
-- Convert signals to CSV format
+### Requirements
+- PlatformIO  
+- ESP-IDF  
 
-### Step 2 — Preprocessing
-- Apply filtering (noise removal)
-- Normalize signals
-- Segment into windows
+### Build
+```bash
+pio run
+```
 
-### Step 3 — Feature Extraction
-- RR intervals
-- Heart rate
-- Time-domain features
+### Flash
+```bash
+pio run -t upload
+```
 
-### Step 4 — Model Training
-- Train classifiers (Random Forest, MLP)
+### Monitor
+```bash
+pio device monitor
+```
 
-### Step 5 — Evaluation
-- Accuracy
-- Confusion matrix
-- Precision / Recall
+## ⚡ Sampling
+- Sampling rate: ~200 Hz
+- Real-time processing on ESP32-S3
 
-### Step 6 — Export Model
-- Convert model to embedded format (JSON or C array)
+## 🔋 Power Supply
+- Powered via USB (power bank)
+- Low-power embedded operation
 
-### Step 7 — Embedded Integration
-- Implement inference on ESP32
-- Real-time ECG analysis
+## 🚧 Current Status
+- ✔ ECG acquisition
+- ✔ Signal processing
+- ✔ BPM estimation
+- ✔ OLED visualization
+- ✔ FreeRTOS integration
+- 🔄 AI integration (in progress)
 
----
+## 🔮 Future Improvements
+- Embedded AI inference (TensorFlow Lite Micro)
+- Mobile app integration (Bluetooth/Wi-Fi)
+- Data logging (SD card / cloud)
+- Noise reduction improvements
+- Multi-lead ECG
 
-## 🧪 Technologies Used
-
-- Python
-- NumPy
-- Pandas
-- Scikit-learn
-- WFDB (MIT-BIH dataset)
-- ESP-IDF (embedded system)
-
----
-
-## 📊 Dataset
-
-MIT-BIH Arrhythmia Database  
-Source: PhysioNet
-
-Contains annotated ECG recordings used for validation and training.
-
----
-
-## 🚀 Future Improvements
-
-- Implement full Pan-Tompkins algorithm on ESP32
-- Use deep learning models (CNN)
-- Mobile application integration
-- MQTT communication for remote monitoring
-
----
+## ⚠️ Disclaimer
+- This project is for educational and research purposes only.
+- It is not a medical device and must not be used for diagnosis.
 
 ## 👨‍💻 Author
+- Guilherme Martins Specht
+- Computer Engineering / Microelectronics
+- PUCRS / Polytech Montpellier
 
-Guilherme Martins Specht  
-Computer Engineering / Embedded Systems  
-Polytech Montpellier / PUCRS
-
----
-
-## 📌 Notes
-
-This project is part of a Final Year Project (PFE) and focuses on:
-
-- Embedded systems
-- Biomedical signal processing
-- Artificial intelligence
+## 📄 License
+This project is open-source for academic use.
