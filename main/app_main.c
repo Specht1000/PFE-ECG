@@ -28,7 +28,8 @@ static void taskApp(void *pv)
             sh1106_draw_text_line(0, "PFE ECG");
             sh1106_draw_text_line(2, "Eletrodos soltos");
             sh1106_draw_text_line(3, "Verifique conexao");
-        } else {
+        } 
+        else {
             if (ecg_hw_read_sample(&ecg_sample) == ESP_OK) {
                 uint64_t now_us = (uint64_t)esp_timer_get_time();
 
@@ -56,7 +57,8 @@ static void taskApp(void *pv)
                 sh1106_draw_text_line(1, line1);
                 sh1106_draw_text_line(2, line2);
                 sh1106_draw_text_line(3, line3);
-            } else {
+            } 
+            else {
                 LOG("APP", "Failed to read ECG sample");
             }
         }
@@ -92,7 +94,7 @@ void app_main(void)
 
     sh1106_clear();
     sh1106_draw_text_line(0, "PFE ECG");
-    sh1106_draw_text_line(2, "Inicializando...");
+    sh1106_draw_text_line(2, "Starting...");
 
     xTaskCreate(taskMonitorTasks, "task_monitor", 4096, NULL, 5, NULL);
     xTaskCreate(taskApp,          "task_app",     4096, NULL, 4, NULL);

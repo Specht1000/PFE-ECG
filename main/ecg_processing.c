@@ -1,97 +1,110 @@
 #include "ecg_processing.h"
-#include <string.h>
 
-#define ECG_RR_MIN_US          300000ULL   // 300 ms => 200 bpm
-#define ECG_RR_MAX_US         2000000ULL   // 2 s => 30 bpm
-#define ECG_INIT_THRESHOLD         500
-#define ECG_MIN_THRESHOLD          100
-
-static int16_t buf_get_i16(const int16_t *buf, uint16_t size, int idx_mod)
+static int16_t ecg_buf_get_i16(const int16_t *buf, uint16_t size, int idx_mod)
 {
     while (idx_mod < 0) {
         idx_mod += size;
     }
+
     idx_mod %= size;
     return buf[idx_mod];
 }
 
+static int32_t ecg_clip_i64_to_i32(int64_t value)
+{
+    if (value > 2147483647LL) {
+        return 2147483647;
+    }
+    if (value < -2147483648LL) {
+        return -2147483648LL;
+    }
+    return (int32_t)value;
+}
+
 void ecg_pt_init(ecg_pt_state_t *st)
 {
-    if (!st) {
+    if (st == NULL) {
         return;
     }
 
     memset(st, 0, sizeof(*st));
-    st->signal_level = 1200;
-    st->noise_level = 300;
+
+    st->signal_level = ECG_INIT_SIGNAL_LEVEL;
+    st->noise_level = ECG_INIT_NOISE_LEVEL;
     st->threshold1 = ECG_INIT_THRESHOLD;
     st->threshold2 = ECG_INIT_THRESHOLD / 2;
     st->initialized = true;
 }
 
+void ecg_pt_reset(ecg_pt_state_t *st)
+{
+    ecg_pt_init(st);
+}
+
 static int32_t pan_tompkins_lowpass(ecg_pt_state_t *st, int16_t x)
 {
     /*
-     * Implementação simples inspirada no low-pass clássico:
+     * Low-pass clássico:
      * y[n] = 2y[n-1] - y[n-2] + x[n] - 2x[n-6] + x[n-12]
-     *
-     * Para simplificar estado, usamos buffer circular do sinal bruto.
      */
+
     uint16_t idx = st->raw_idx;
     st->raw_buf[idx] = x;
 
-    int16_t xn    = buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx);
-    int16_t xn_6  = buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 6);
-    int16_t xn_12 = buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 12);
+    int16_t xn    = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx);
+    int16_t xn_6  = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 6);
+    int16_t xn_12 = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 12);
 
-    static int32_t y1 = 0;
-    static int32_t y2 = 0;
+    int64_t y = (2LL * st->lp_y1) - st->lp_y2 + xn - (2LL * xn_6) + xn_12;
+    int32_t y32 = ecg_clip_i64_to_i32(y);
 
-    int32_t y = (2 * y1) - y2 + xn - (2 * xn_6) + xn_12;
+    st->lp_y2 = st->lp_y1;
+    st->lp_y1 = y32;
 
-    y2 = y1;
-    y1 = y;
+    st->raw_idx = (st->raw_idx + 1U) % ECG_PT_BANDPASS_BUF_SIZE;
 
-    st->raw_idx = (st->raw_idx + 1) % ECG_PT_BANDPASS_BUF_SIZE;
-    return y;
+    return y32;
 }
 
-static int32_t pan_tompkins_highpass(int32_t x_lp)
+static int32_t pan_tompkins_highpass(ecg_pt_state_t *st, int32_t x_lp)
 {
     /*
-     * High-pass simplificado:
-     * y[n] = y[n-1] + x[n] - x[n-1] - x[n-16]/32 + x[n-17] - x[n-32] + x[n-33]/32
-     *
-     * Aqui usamos uma versão prática mais leve:
+     * Versão simplificada:
      * high = current_lp - média lenta
      */
-    static int64_t slow_avg = 0;
-    slow_avg = (slow_avg * 31 + x_lp) / 32;
-    return (int32_t)(x_lp - slow_avg);
+
+    st->hp_slow_avg = (st->hp_slow_avg * 31LL + x_lp) / 32LL;
+
+    int64_t hp = (int64_t)x_lp - st->hp_slow_avg;
+    return ecg_clip_i64_to_i32(hp);
 }
 
 static int32_t pan_tompkins_derivative(ecg_pt_state_t *st, int32_t x_bp)
 {
     /*
-     * Derivada clássica aproximada:
+     * Derivada aproximada:
      * y[n] = (2x[n] + x[n-1] - x[n-3] - 2x[n-4]) / 8
      */
-    int32_t y = (2 * x_bp + st->prev_bp_1 - st->prev_bp_3 - 2 * st->prev_bp_4) / 8;
+
+    int64_t y = (2LL * x_bp + st->prev_bp_1 - st->prev_bp_3 - 2LL * st->prev_bp_4) / 8LL;
+    int32_t y32 = ecg_clip_i64_to_i32(y);
 
     st->prev_bp_4 = st->prev_bp_3;
     st->prev_bp_3 = st->prev_bp_2;
     st->prev_bp_2 = st->prev_bp_1;
     st->prev_bp_1 = x_bp;
 
-    return y;
+    return y32;
 }
 
 static int32_t pan_tompkins_square(int32_t x)
 {
     int64_t sq = (int64_t)x * (int64_t)x;
+
     if (sq > 2147483647LL) {
         return 2147483647;
     }
+
     return (int32_t)sq;
 }
 
@@ -101,12 +114,12 @@ static int32_t pan_tompkins_mwi(ecg_pt_state_t *st, int32_t x_sq)
     st->mwi_buf[st->mwi_idx] = x_sq;
     st->mwi_sum += x_sq;
 
-    st->mwi_idx = (st->mwi_idx + 1) % ECG_PT_MOVING_WINDOW_SIZE;
+    st->mwi_idx = (st->mwi_idx + 1U) % ECG_PT_MOVING_WINDOW_SIZE;
 
     return (int32_t)(st->mwi_sum / ECG_PT_MOVING_WINDOW_SIZE);
 }
 
-static void update_thresholds(ecg_pt_state_t *st, int32_t peak, bool is_signal)
+static void ecg_update_thresholds(ecg_pt_state_t *st, int32_t peak, bool is_signal)
 {
     if (is_signal) {
         st->signal_level = (peak + 7 * st->signal_level) / 8;
@@ -120,14 +133,15 @@ static void update_thresholds(ecg_pt_state_t *st, int32_t peak, bool is_signal)
     if (st->threshold1 < ECG_MIN_THRESHOLD) {
         st->threshold1 = ECG_MIN_THRESHOLD;
     }
-    if (st->threshold2 < ECG_MIN_THRESHOLD / 2) {
+
+    if (st->threshold2 < (ECG_MIN_THRESHOLD / 2)) {
         st->threshold2 = ECG_MIN_THRESHOLD / 2;
     }
 }
 
 void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, ecg_pt_output_t *out)
 {
-    if (!st || !out || !st->initialized) {
+    if (st == NULL || out == NULL || !st->initialized) {
         return;
     }
 
@@ -135,7 +149,7 @@ void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, 
     out->raw = sample;
 
     int32_t lp  = pan_tompkins_lowpass(st, sample);
-    int32_t hp  = pan_tompkins_highpass(lp);
+    int32_t hp  = pan_tompkins_highpass(st, lp);
     int32_t der = pan_tompkins_derivative(st, hp);
     int32_t sq  = pan_tompkins_square(der);
     int32_t mwi = pan_tompkins_mwi(st, sq);
@@ -146,15 +160,16 @@ void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, 
     st->squared    = sq;
     st->integrated = mwi;
 
-    out->bandpassed = hp;
-    out->derivative = der;
-    out->squared    = sq;
-    out->integrated = mwi;
-    out->threshold  = st->threshold1;
-    out->bpm        = st->bpm;
+    out->low_pass    = lp;
+    out->bandpassed  = hp;
+    out->derivative  = der;
+    out->squared     = sq;
+    out->integrated  = mwi;
+    out->threshold   = st->threshold1;
+    out->bpm         = st->bpm;
 
     /*
-     * Máximo local no sinal integrado:
+     * Detecta máximo local no sinal integrado:
      * prev_integrated > prev_prev_integrated
      * prev_integrated >= current
      */
@@ -168,11 +183,12 @@ void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, 
         if (peak > st->threshold1) {
             bool accepted = false;
 
-            if (st->last_peak_us == 0) {
+            if (st->last_peak_us == 0ULL) {
                 st->last_peak_us = now_us;
                 accepted = true;
             } else {
                 uint64_t rr_us = now_us - st->last_peak_us;
+
                 if (rr_us >= ECG_RR_MIN_US && rr_us <= ECG_RR_MAX_US) {
                     st->bpm = (uint32_t)(60000000ULL / rr_us);
                     st->last_peak_us = now_us;
@@ -183,12 +199,12 @@ void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, 
             if (accepted) {
                 out->r_peak_detected = true;
                 out->bpm = st->bpm;
-                update_thresholds(st, peak, true);
+                ecg_update_thresholds(st, peak, true);
             } else {
-                update_thresholds(st, peak, false);
+                ecg_update_thresholds(st, peak, false);
             }
         } else {
-            update_thresholds(st, peak, false);
+            ecg_update_thresholds(st, peak, false);
         }
     }
 

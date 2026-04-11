@@ -1,10 +1,6 @@
 #include "sh1106_oled.h"
-#include <string.h>
 
-static i2c_port_t s_port = SH1106_I2C_PORT;
-static uint8_t s_addr = SH1106_I2C_ADDR;
-
-static const uint8_t font6x8[][6] = {
+static const uint8_t font6x8[128][6] = {
     [' '] = {0x00,0x00,0x00,0x00,0x00,0x00},
     ['0'] = {0x3E,0x51,0x49,0x45,0x3E,0x00},
     ['1'] = {0x00,0x42,0x7F,0x40,0x00,0x00},
@@ -75,81 +71,122 @@ static const uint8_t font6x8[][6] = {
     ['.'] = {0x00,0x60,0x60,0x00,0x00,0x00},
 };
 
-static esp_err_t sh1106_write_cmd(uint8_t cmd)
+static esp_err_t sh1106_write_cmd(sh1106_t *dev, uint8_t cmd)
 {
+    if (dev == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     uint8_t data[2] = {0x00, cmd};
-    return i2c_master_write_to_device(s_port, s_addr, data, sizeof(data), pdMS_TO_TICKS(100));
+
+    return i2c_master_write_to_device(
+        dev->port,
+        dev->addr,
+        data,
+        sizeof(data),
+        pdMS_TO_TICKS(SH1106_I2C_TIMEOUT_MS)
+    );
 }
 
-static esp_err_t sh1106_write_data(const uint8_t *data, size_t len)
+static esp_err_t sh1106_write_data(sh1106_t *dev, const uint8_t *data, size_t len)
 {
-    uint8_t buffer[129];
+    if (dev == NULL || data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (len > 128) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    uint8_t buffer[129];
     buffer[0] = 0x40;
     memcpy(&buffer[1], data, len);
-    return i2c_master_write_to_device(s_port, s_addr, buffer, len + 1, pdMS_TO_TICKS(100));
+
+    return i2c_master_write_to_device(
+        dev->port,
+        dev->addr,
+        buffer,
+        len + 1,
+        pdMS_TO_TICKS(SH1106_I2C_TIMEOUT_MS)
+    );
 }
 
-static esp_err_t sh1106_set_page_col(uint8_t page, uint8_t col)
+static esp_err_t sh1106_set_page_col(sh1106_t *dev, uint8_t page, uint8_t col)
 {
-    esp_err_t err;
-    err = sh1106_write_cmd(0xB0 + page);
-    if (err != ESP_OK) return err;
+    if (dev == NULL || page >= SH1106_PAGES || col >= SH1106_WIDTH) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    err = sh1106_write_cmd(0x02 + (col & 0x0F));
-    if (err != ESP_OK) return err;
+    esp_err_t err = sh1106_write_cmd(dev, 0xB0 + page);
+    if (err != ESP_OK) {
+        return err;
+    }
 
-    err = sh1106_write_cmd(0x10 + ((col >> 4) & 0x0F));
+    err = sh1106_write_cmd(dev, 0x02 + (col & 0x0F));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = sh1106_write_cmd(dev, 0x10 + ((col >> 4) & 0x0F));
     return err;
 }
 
-esp_err_t sh1106_init(i2c_port_t port, uint8_t addr)
+esp_err_t sh1106_init(sh1106_t *dev, i2c_port_t port, uint8_t addr)
 {
-    s_port = port;
-    s_addr = addr;
+    if (dev == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    dev->port = port;
+    dev->addr = addr;
+    dev->initialized = false;
 
     esp_err_t err;
-    err = sh1106_write_cmd(0xAE); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xD5); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x80); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xA8); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x3F); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xD3); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x00); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x40); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xAD); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x8B); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xA1); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xC8); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xDA); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x12); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x81); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x7F); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xD9); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x22); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xDB); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0x20); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xA4); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xA6); if (err != ESP_OK) return err;
-    err = sh1106_write_cmd(0xAF); if (err != ESP_OK) return err;
 
-    return sh1106_clear();
+    err = sh1106_write_cmd(dev, 0xAE); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xD5); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x80); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xA8); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x3F); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xD3); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x00); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x40); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xAD); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x8B); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xA1); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xC8); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xDA); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x12); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x81); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x7F); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xD9); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x22); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xDB); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0x20); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xA4); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xA6); if (err != ESP_OK) return err;
+    err = sh1106_write_cmd(dev, 0xAF); if (err != ESP_OK) return err;
+
+    dev->initialized = true;
+
+    return sh1106_clear(dev);
 }
 
-esp_err_t sh1106_clear(void)
+esp_err_t sh1106_clear(sh1106_t *dev)
 {
+    if (dev == NULL || !dev->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     uint8_t zero[128] = {0};
 
     for (uint8_t page = 0; page < SH1106_PAGES; page++) {
-        esp_err_t err = sh1106_set_page_col(page, 0);
+        esp_err_t err = sh1106_set_page_col(dev, page, 0);
         if (err != ESP_OK) {
             return err;
         }
 
-        err = sh1106_write_data(zero, sizeof(zero));
+        err = sh1106_write_data(dev, zero, sizeof(zero));
         if (err != ESP_OK) {
             return err;
         }
@@ -158,9 +195,17 @@ esp_err_t sh1106_clear(void)
     return ESP_OK;
 }
 
-esp_err_t sh1106_draw_text_line(uint8_t line, const char *text)
+esp_err_t sh1106_draw_text_line(sh1106_t *dev, uint8_t line, const char *text)
 {
-    if (line >= SH1106_PAGES || text == NULL) {
+    if (dev == NULL || text == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!dev->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (line >= SH1106_PAGES) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -176,22 +221,20 @@ esp_err_t sh1106_draw_text_line(uint8_t line, const char *text)
         unsigned char c = (unsigned char)text[i];
         const uint8_t *glyph = font6x8[' '];
 
-        if (c < sizeof(font6x8) / sizeof(font6x8[0]) && font6x8[c][0] != 0) {
+        if (c < 128) {
             glyph = font6x8[c];
-        } else if (c == ' ') {
-            glyph = font6x8[' '];
         }
 
         size_t pos = i * 6;
-        if (pos + 6 <= sizeof(buffer)) {
+        if ((pos + 6U) <= sizeof(buffer)) {
             memcpy(&buffer[pos], glyph, 6);
         }
     }
 
-    esp_err_t err = sh1106_set_page_col(line, 0);
+    esp_err_t err = sh1106_set_page_col(dev, line, 0);
     if (err != ESP_OK) {
         return err;
     }
 
-    return sh1106_write_data(buffer, sizeof(buffer));
+    return sh1106_write_data(dev, buffer, sizeof(buffer));
 }
