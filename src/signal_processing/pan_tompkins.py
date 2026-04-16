@@ -20,25 +20,16 @@ def moving_window_integration(signal: np.ndarray, window_size: int) -> np.ndarra
 
 
 def detect_r_peaks(signal: np.ndarray, fs: int):
-    """
-    Simplified Pan-Tompkins-like pipeline:
-    1. Bandpass filter
-    2. Derivative
-    3. Squaring
-    4. Moving window integration
-    5. Peak detection
-    """
-
     filtered = bandpass_filter(signal, fs=fs, lowcut=5.0, highcut=15.0, order=2)
 
     derivative = np.diff(filtered, prepend=filtered[0])
     squared = derivative ** 2
 
-    integration_window = int(0.150 * fs)  # 150 ms
+    integration_window = int(0.150 * fs)
     integrated = moving_window_integration(squared, integration_window)
 
     threshold = np.mean(integrated) + 0.5 * np.std(integrated)
-    min_distance = int(0.250 * fs)  # 250 ms refractory period
+    min_distance = int(0.250 * fs)
 
     peaks, properties = find_peaks(
         integrated,
@@ -57,9 +48,6 @@ def detect_r_peaks(signal: np.ndarray, fs: int):
 
 
 def compute_rr_intervals(r_peaks: np.ndarray, fs: int) -> np.ndarray:
-    """
-    Compute RR intervals in seconds from R peak sample indices.
-    """
     if len(r_peaks) < 2:
         return np.array([])
 

@@ -1,213 +1,163 @@
 #include "ecg_processing.h"
 
-static int16_t ecg_buf_get_i16(const int16_t *buf, uint16_t size, int idx_mod)
-{
-    while (idx_mod < 0) {
-        idx_mod += size;
-    }
+#include <math.h>
+#include <string.h>
+#include "ecg_classifier.h"
 
-    idx_mod %= size;
-    return buf[idx_mod];
-}
-
-static int32_t ecg_clip_i64_to_i32(int64_t value)
+static void push_value(float *buffer, int max_size, int *count, float value)
 {
-    if (value > 2147483647LL) {
-        return 2147483647;
-    }
-    if (value < -2147483648LL) {
-        return -2147483648LL;
-    }
-    return (int32_t)value;
-}
-
-void ecg_pt_init(ecg_pt_state_t *st)
-{
-    if (st == NULL) {
+    if (*count < max_size) {
+        buffer[*count] = value;
+        (*count)++;
         return;
     }
 
-    memset(st, 0, sizeof(*st));
-
-    st->signal_level = ECG_INIT_SIGNAL_LEVEL;
-    st->noise_level = ECG_INIT_NOISE_LEVEL;
-    st->threshold1 = ECG_INIT_THRESHOLD;
-    st->threshold2 = ECG_INIT_THRESHOLD / 2;
-    st->initialized = true;
+    for (int i = 1; i < max_size; ++i) {
+        buffer[i - 1] = buffer[i];
+    }
+    buffer[max_size - 1] = value;
 }
 
-void ecg_pt_reset(ecg_pt_state_t *st)
+static float mean_f(const float *v, int n)
 {
-    ecg_pt_init(st);
-}
-
-static int32_t pan_tompkins_lowpass(ecg_pt_state_t *st, int16_t x)
-{
-    /*
-     * Low-pass clássico:
-     * y[n] = 2y[n-1] - y[n-2] + x[n] - 2x[n-6] + x[n-12]
-     */
-
-    uint16_t idx = st->raw_idx;
-    st->raw_buf[idx] = x;
-
-    int16_t xn    = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx);
-    int16_t xn_6  = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 6);
-    int16_t xn_12 = ecg_buf_get_i16(st->raw_buf, ECG_PT_BANDPASS_BUF_SIZE, idx - 12);
-
-    int64_t y = (2LL * st->lp_y1) - st->lp_y2 + xn - (2LL * xn_6) + xn_12;
-    int32_t y32 = ecg_clip_i64_to_i32(y);
-
-    st->lp_y2 = st->lp_y1;
-    st->lp_y1 = y32;
-
-    st->raw_idx = (st->raw_idx + 1U) % ECG_PT_BANDPASS_BUF_SIZE;
-
-    return y32;
-}
-
-static int32_t pan_tompkins_highpass(ecg_pt_state_t *st, int32_t x_lp)
-{
-    /*
-     * Versão simplificada:
-     * high = current_lp - média lenta
-     */
-
-    st->hp_slow_avg = (st->hp_slow_avg * 31LL + x_lp) / 32LL;
-
-    int64_t hp = (int64_t)x_lp - st->hp_slow_avg;
-    return ecg_clip_i64_to_i32(hp);
-}
-
-static int32_t pan_tompkins_derivative(ecg_pt_state_t *st, int32_t x_bp)
-{
-    /*
-     * Derivada aproximada:
-     * y[n] = (2x[n] + x[n-1] - x[n-3] - 2x[n-4]) / 8
-     */
-
-    int64_t y = (2LL * x_bp + st->prev_bp_1 - st->prev_bp_3 - 2LL * st->prev_bp_4) / 8LL;
-    int32_t y32 = ecg_clip_i64_to_i32(y);
-
-    st->prev_bp_4 = st->prev_bp_3;
-    st->prev_bp_3 = st->prev_bp_2;
-    st->prev_bp_2 = st->prev_bp_1;
-    st->prev_bp_1 = x_bp;
-
-    return y32;
-}
-
-static int32_t pan_tompkins_square(int32_t x)
-{
-    int64_t sq = (int64_t)x * (int64_t)x;
-
-    if (sq > 2147483647LL) {
-        return 2147483647;
+    if (n <= 0) {
+        return 0.0f;
     }
 
-    return (int32_t)sq;
+    float sum = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        sum += v[i];
+    }
+    return sum / (float)n;
 }
 
-static int32_t pan_tompkins_mwi(ecg_pt_state_t *st, int32_t x_sq)
+static float std_f(const float *v, int n)
 {
-    st->mwi_sum -= st->mwi_buf[st->mwi_idx];
-    st->mwi_buf[st->mwi_idx] = x_sq;
-    st->mwi_sum += x_sq;
+    if (n < 2) {
+        return 0.0f;
+    }
 
-    st->mwi_idx = (st->mwi_idx + 1U) % ECG_PT_MOVING_WINDOW_SIZE;
-
-    return (int32_t)(st->mwi_sum / ECG_PT_MOVING_WINDOW_SIZE);
+    float m = mean_f(v, n);
+    float acc = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        float d = v[i] - m;
+        acc += d * d;
+    }
+    return sqrtf(acc / (float)(n - 1));
 }
 
-static void ecg_update_thresholds(ecg_pt_state_t *st, int32_t peak, bool is_signal)
+static float min_f(const float *v, int n)
 {
-    if (is_signal) {
-        st->signal_level = (peak + 7 * st->signal_level) / 8;
-    } else {
-        st->noise_level = (peak + 7 * st->noise_level) / 8;
+    if (n <= 0) {
+        return 0.0f;
     }
 
-    st->threshold1 = st->noise_level + ((st->signal_level - st->noise_level) / 4);
-    st->threshold2 = st->threshold1 / 2;
-
-    if (st->threshold1 < ECG_MIN_THRESHOLD) {
-        st->threshold1 = ECG_MIN_THRESHOLD;
+    float m = v[0];
+    for (int i = 1; i < n; ++i) {
+        if (v[i] < m) {
+            m = v[i];
+        }
     }
-
-    if (st->threshold2 < (ECG_MIN_THRESHOLD / 2)) {
-        st->threshold2 = ECG_MIN_THRESHOLD / 2;
-    }
+    return m;
 }
 
-void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, ecg_pt_output_t *out)
+static float max_f(const float *v, int n)
 {
-    if (st == NULL || out == NULL || !st->initialized) {
-        return;
+    if (n <= 0) {
+        return 0.0f;
     }
 
+    float m = v[0];
+    for (int i = 1; i < n; ++i) {
+        if (v[i] > m) {
+            m = v[i];
+        }
+    }
+    return m;
+}
+
+static void build_features(ecg_processing_t *ctx, ecg_features_t *out)
+{
     memset(out, 0, sizeof(*out));
-    out->raw = sample;
 
-    int32_t lp  = pan_tompkins_lowpass(st, sample);
-    int32_t hp  = pan_tompkins_highpass(st, lp);
-    int32_t der = pan_tompkins_derivative(st, hp);
-    int32_t sq  = pan_tompkins_square(der);
-    int32_t mwi = pan_tompkins_mwi(st, sq);
+    float rr_mean = mean_f(ctx->rr_ms_buffer, ctx->rr_count);
+    float rr_std = std_f(ctx->rr_ms_buffer, ctx->rr_count);
 
-    st->low_pass   = lp;
-    st->high_pass  = hp;
-    st->derivative = der;
-    st->squared    = sq;
-    st->integrated = mwi;
+    out->rr_mean_ms = rr_mean;
+    out->rr_std_ms = rr_std;
+    out->rr_min_ms = min_f(ctx->rr_ms_buffer, ctx->rr_count);
+    out->rr_max_ms = max_f(ctx->rr_ms_buffer, ctx->rr_count);
+    out->rr_cv = (rr_mean > 1.0f) ? (rr_std / rr_mean) : 0.0f;
 
-    out->low_pass    = lp;
-    out->bandpassed  = hp;
-    out->derivative  = der;
-    out->squared     = sq;
-    out->integrated  = mwi;
-    out->threshold   = st->threshold1;
-    out->bpm         = st->bpm;
+    float hr_buf[ECG_RR_BUFFER_SIZE];
+    for (int i = 0; i < ctx->rr_count; ++i) {
+        hr_buf[i] = (ctx->rr_ms_buffer[i] > 1.0f) ? (60000.0f / ctx->rr_ms_buffer[i]) : 0.0f;
+    }
 
-    /*
-     * Detecta máximo local no sinal integrado:
-     * prev_integrated > prev_prev_integrated
-     * prev_integrated >= current
-     */
-    bool local_peak =
-        (st->prev_integrated > st->prev_prev_integrated) &&
-        (st->prev_integrated >= mwi);
+    out->hr_mean_bpm = mean_f(hr_buf, ctx->rr_count);
+    out->hr_std_bpm = std_f(hr_buf, ctx->rr_count);
 
-    if (local_peak) {
-        int32_t peak = st->prev_integrated;
+    out->qrs_width_mean_ms = mean_f(ctx->qrs_ms_buffer, ctx->qrs_count);
+    out->qrs_width_std_ms = std_f(ctx->qrs_ms_buffer, ctx->qrs_count);
 
-        if (peak > st->threshold1) {
-            bool accepted = false;
+    out->num_rr_intervals = (uint32_t)ctx->rr_count;
+    out->num_r_peaks = (uint32_t)(ctx->rr_count + 1);
+}
 
-            if (st->last_peak_us == 0ULL) {
-                st->last_peak_us = now_us;
-                accepted = true;
-            } else {
-                uint64_t rr_us = now_us - st->last_peak_us;
+void ecg_processing_init(ecg_processing_t *ctx, int fs_hz)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    ecg_pt_init(&ctx->pt, fs_hz);
+    ctx->last_class = ECG_CLASS_UNKNOWN;
+    ctx->class_valid = false;
+}
 
-                if (rr_us >= ECG_RR_MIN_US && rr_us <= ECG_RR_MAX_US) {
-                    st->bpm = (uint32_t)(60000000ULL / rr_us);
-                    st->last_peak_us = now_us;
-                    accepted = true;
-                }
-            }
+void ecg_processing_reset(ecg_processing_t *ctx)
+{
+    int fs_hz = ctx->pt.fs_hz;
+    ecg_processing_init(ctx, fs_hz);
+}
 
-            if (accepted) {
-                out->r_peak_detected = true;
-                out->bpm = st->bpm;
-                ecg_update_thresholds(st, peak, true);
-            } else {
-                ecg_update_thresholds(st, peak, false);
-            }
-        } else {
-            ecg_update_thresholds(st, peak, false);
+void ecg_processing_process_sample(
+    ecg_processing_t *ctx,
+    int16_t sample,
+    ecg_processing_output_t *out
+)
+{
+    memset(out, 0, sizeof(*out));
+    out->current_class = ctx->last_class;
+
+    ecg_pt_output_t pt_out;
+    ecg_pt_process(&ctx->pt, sample, &pt_out);
+
+    if (pt_out.r_peak_detected) {
+        out->beat_detected = true;
+        out->bpm_inst = pt_out.bpm_inst;
+
+        if (pt_out.rr_ms > 50.0f && pt_out.rr_ms < 3000.0f) {
+            push_value(ctx->rr_ms_buffer, ECG_RR_BUFFER_SIZE, &ctx->rr_count, pt_out.rr_ms);
+        }
+
+        if (pt_out.qrs_width_ms > 20.0f && pt_out.qrs_width_ms < 300.0f) {
+            push_value(ctx->qrs_ms_buffer, ECG_QRS_BUFFER_SIZE, &ctx->qrs_count, pt_out.qrs_width_ms);
+        }
+
+        if (ctx->rr_count >= ECG_MIN_RR_FOR_CLASSIFY) {
+            ecg_features_t features;
+            build_features(ctx, &features);
+
+            ctx->last_features = features;
+            ctx->last_class = ecg_classifier_predict(&features);
+            ctx->class_valid = true;
+
+            out->class_updated = true;
+            out->current_class = ctx->last_class;
+            out->features = ctx->last_features;
         }
     }
 
-    st->prev_prev_integrated = st->prev_integrated;
-    st->prev_integrated = mwi;
+    if (ctx->class_valid) {
+        out->current_class = ctx->last_class;
+        out->features = ctx->last_features;
+    }
 }

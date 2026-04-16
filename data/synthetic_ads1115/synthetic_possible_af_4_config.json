@@ -1,0 +1,19 @@
+{
+  "label": "possible_af",
+  "duration_s": 30.0,
+  "sampling_rate_hz": 250,
+  "ads1115_full_scale_v": 4.096,
+  "ads1115_mode": "single_ended",
+  "differential_midpoint_v": 1.5,
+  "analog_gain": 1.0,
+  "analog_offset_v": 1.5,
+  "baseline_wander_amp_v": 0.03,
+  "baseline_wander_freq_hz": 0.33,
+  "mains_amp_v": 0.004,
+  "mains_freq_hz": 50.0,
+  "white_noise_std_v": 0.003,
+  "muscle_noise_std_v": 0.002,
+  "saturation_min_v": 0.0,
+  "saturation_max_v": 3.3,
+  "seed": 4
+}

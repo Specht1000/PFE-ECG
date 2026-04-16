@@ -1,85 +1,72 @@
 #ifndef ECG_PROCESSING_H
 #define ECG_PROCESSING_H
 
-#include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
+#include <stdint.h>
+#include "pan_tompkins.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define ECG_RR_MIN_US                  300000ULL   // 300 ms => 200 bpm
-#define ECG_RR_MAX_US                 2000000ULL   // 2 s => 30 bpm
+#define ECG_RR_BUFFER_SIZE         16
+#define ECG_QRS_BUFFER_SIZE        16
+#define ECG_MIN_RR_FOR_CLASSIFY    8
 
-#define ECG_INIT_SIGNAL_LEVEL              1200
-#define ECG_INIT_NOISE_LEVEL                300
-#define ECG_INIT_THRESHOLD                  500
-#define ECG_MIN_THRESHOLD                  100
-
-#define ECG_PT_MOVING_WINDOW_SIZE           30
-#define ECG_PT_BANDPASS_BUF_SIZE            64
-
-typedef struct {
-    /* Buffer bruto para filtros */
-    int16_t raw_buf[ECG_PT_BANDPASS_BUF_SIZE];
-    uint16_t raw_idx;
-
-    /* Saídas intermediárias */
-    int32_t low_pass;
-    int32_t high_pass;
-    int32_t derivative;
-    int32_t squared;
-    int32_t integrated;
-
-    /* Estado do low-pass */
-    int32_t lp_y1;
-    int32_t lp_y2;
-
-    /* Estado do high-pass */
-    int64_t hp_slow_avg;
-
-    /* Histórico para derivada */
-    int32_t prev_bp_1;
-    int32_t prev_bp_2;
-    int32_t prev_bp_3;
-    int32_t prev_bp_4;
-
-    /* Janela móvel */
-    int32_t mwi_buf[ECG_PT_MOVING_WINDOW_SIZE];
-    uint16_t mwi_idx;
-    int64_t mwi_sum;
-
-    /* Pico e ritmo */
-    int32_t prev_integrated;
-    int32_t prev_prev_integrated;
-    uint64_t last_peak_us;
-    uint32_t bpm;
-
-    /* Limiar adaptativo */
-    int32_t signal_level;
-    int32_t noise_level;
-    int32_t threshold1;
-    int32_t threshold2;
-
-    bool initialized;
-} ecg_pt_state_t;
+typedef enum {
+    ECG_CLASS_NORMAL = 0,
+    ECG_CLASS_BRADYCARDIA,
+    ECG_CLASS_TACHYCARDIA,
+    ECG_CLASS_POSSIBLE_AF,
+    ECG_CLASS_UNKNOWN
+} ecg_class_t;
 
 typedef struct {
-    int16_t raw;
-    int32_t low_pass;
-    int32_t bandpassed;
-    int32_t derivative;
-    int32_t squared;
-    int32_t integrated;
-    bool r_peak_detected;
-    uint32_t bpm;
-    int32_t threshold;
-} ecg_pt_output_t;
+    float rr_mean_ms;
+    float rr_std_ms;
+    float rr_min_ms;
+    float rr_max_ms;
+    float rr_cv;
 
-void ecg_pt_init(ecg_pt_state_t *st);
-void ecg_pt_reset(ecg_pt_state_t *st);
-void ecg_pt_process_sample(ecg_pt_state_t *st, int16_t sample, uint64_t now_us, ecg_pt_output_t *out);
+    float hr_mean_bpm;
+    float hr_std_bpm;
+
+    float qrs_width_mean_ms;
+    float qrs_width_std_ms;
+
+    uint32_t num_r_peaks;
+    uint32_t num_rr_intervals;
+} ecg_features_t;
+
+typedef struct {
+    ecg_pt_state_t pt;
+
+    float rr_ms_buffer[ECG_RR_BUFFER_SIZE];
+    float qrs_ms_buffer[ECG_QRS_BUFFER_SIZE];
+
+    int rr_count;
+    int qrs_count;
+
+    ecg_features_t last_features;
+    ecg_class_t last_class;
+    bool class_valid;
+} ecg_processing_t;
+
+typedef struct {
+    bool beat_detected;
+    bool class_updated;
+    float bpm_inst;
+    ecg_class_t current_class;
+    ecg_features_t features;
+} ecg_processing_output_t;
+
+void ecg_processing_init(ecg_processing_t *ctx, int fs_hz);
+void ecg_processing_reset(ecg_processing_t *ctx);
+void ecg_processing_process_sample(
+    ecg_processing_t *ctx,
+    int16_t sample,
+    ecg_processing_output_t *out
+);
 
 #ifdef __cplusplus
 }
