@@ -126,9 +126,14 @@ void ecg_processing_process_sample(
 {
     memset(out, 0, sizeof(*out));
     out->current_class = ctx->last_class;
+    out->raw_sample = sample;
 
     ecg_pt_output_t pt_out;
     ecg_pt_process(&ctx->pt, sample, &pt_out);
+
+    out->filtered = pt_out.filtered;
+    out->integrated = pt_out.integrated;
+    out->threshold = pt_out.threshold;
 
     if (pt_out.r_peak_detected) {
         out->beat_detected = true;

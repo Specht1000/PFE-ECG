@@ -7,6 +7,7 @@ idf_component_register(
         "ecg_processing.c"
         "ecg_classifier.c"
         "ecg_model_generated.c"
+        "matlab_stream.c"
         "sh1106_oled.c"
         "tasks_monitor.c"
     INCLUDE_DIRS

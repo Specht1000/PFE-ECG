@@ -55,6 +55,12 @@ typedef struct {
 typedef struct {
     bool beat_detected;
     bool class_updated;
+
+    int16_t raw_sample;
+    float filtered;
+    float integrated;
+    float threshold;
+
     float bpm_inst;
     ecg_class_t current_class;
     ecg_features_t features;

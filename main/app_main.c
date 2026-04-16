@@ -1,5 +1,6 @@
 #include "main.h"
 #include "ecg_classifier.h"
+#include "matlab_stream.h"
 
 #define TAG "APP"
 
@@ -125,7 +126,9 @@ static void task_app(void *pv)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
-        startTaskTimer(TASK_APP);
+        uint64_t now_us = (uint64_t)esp_timer_get_time();
+
+        matlab_stream_poll();
 
         bool leads_off = ecg_hw_is_leads_off();
 
@@ -134,7 +137,7 @@ static void task_app(void *pv)
                 ecg_hw_get_lo_plus(),
                 ecg_hw_get_lo_minus());
 
-            oled_show_4lines("PFE ECG", "Electrodes disconnected", "Verify connection", "No reading available");
+            oled_show_4lines("PFE ECG", "Eletrodos soltos", "Verifique conexao", "Sem leitura");
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -158,6 +161,8 @@ static void task_app(void *pv)
                     out.features.qrs_width_mean_ms);
             }
 
+            matlab_stream_send_frame(now_us, &out);
+
             char line1[32];
             char line2[32];
             char line3[32];
@@ -173,8 +178,6 @@ static void task_app(void *pv)
         }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / ECG_FS_HZ));
-
-        endTaskTimer(TASK_APP);
     }
 }
 
@@ -194,16 +197,17 @@ void app_main(void)
         LOG(TAG, "Critical startup failure. Halting application.");
         while (1) {
             if (chk.oled_ok) {
-                oled_show_4lines("PFE ECG", "Critical failure", "Verify ADC/ECG", "Restart device");
+                oled_show_4lines("PFE ECG", "Falha critica", "Verifique ADC/ECG", "Reinicie");
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 
     ecg_processing_init(&s_ecg_ctx, ECG_FS_HZ);
+    matlab_stream_init();
 
     LOG(TAG, "Startup check finished. Entering monitoring mode.");
+    LOG(TAG, "For MATLAB serial control: type HELP");
 
-    xTaskCreate(taskMonitorTasks, "task_monitor", 4096, NULL, 5, NULL);
     xTaskCreate(task_app, "task_app", 4096, NULL, 5, NULL);
 }
